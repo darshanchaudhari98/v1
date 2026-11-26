@@ -1,0 +1,98 @@
+%% HEV_Simple.m  -  VERY SIMPLE Hybrid Electric Vehicle model in Simulink
+% Only 12 blocks. No toolboxes needed.
+%
+% Idea:
+%   Speed  -> Power demand  -> Engine takes up to 15 kW
+%                           -> Motor takes the rest (+ assist, - regen)
+%                           -> Battery SOC goes down / up
+%
+% HOW TO RUN: Upload this file to MATLAB Online, open it, click "Run".
+
+clear; clc; close all;
+
+%% 1) Parameters (change if you like)
+Eng_max = 15;      % max engine power [kW]
+V_batt  = 300;     % battery voltage [V]
+Q_Ah    = 6.5;     % battery capacity [Ah]
+SOC0    = 60;      % starting battery charge [%]
+
+%% 2) Create the model
+mdl = 'HEV_Simple_Model';
+if bdIsLoaded(mdl), close_system(mdl,0); end
+new_system(mdl);
+open_system(mdl);
+set_param(mdl,'StopTime','200');
+
+L = 'simulink/';
+
+% Vehicle (blue)
+add_block([L 'Sources/Sine Wave'],[mdl '/Speed_kmh'],'Position',[30 50 80 90], ...
+    'Amplitude','40','Bias','50','Frequency','0.05','Phase','-pi/2', ...
+    'BackgroundColor','[0.8 0.9 1]');
+add_block([L 'Continuous/Derivative'],[mdl '/Acceleration'],'Position',[130 130 190 160], ...
+    'BackgroundColor','[0.8 0.9 1]');
+add_block([L 'Math Operations/Gain'],[mdl '/Gain_speed'],'Position',[250 50 310 80], ...
+    'Gain','0.15','BackgroundColor','[0.8 0.9 1]');
+add_block([L 'Math Operations/Gain'],[mdl '/Gain_accel'],'Position',[250 130 310 160], ...
+    'Gain','5','BackgroundColor','[0.8 0.9 1]');
+add_block([L 'Math Operations/Sum'],[mdl '/Power_demand_kW'],'Position',[370 80 400 130], ...
+    'Inputs','++','BackgroundColor','[0.8 0.9 1]');
+
+% Control unit (red) : engine gives 0..Eng_max, motor gives the rest
+add_block([L 'Discontinuities/Saturation'],[mdl '/Engine_kW'],'Position',[480 40 560 70], ...
+    'UpperLimit','Eng_max','LowerLimit','0','BackgroundColor','[1 0.82 0.82]');
+add_block([L 'Math Operations/Sum'],[mdl '/Motor_kW'],'Position',[620 90 650 140], ...
+    'Inputs','+-','BackgroundColor','[1 0.97 0.7]');
+
+% Battery (orange)
+add_block([L 'Math Operations/Gain'],[mdl '/To_SOC_rate'],'Position',[710 100 800 130], ...
+    'Gain','-100*1000/(V_batt*Q_Ah*3600)','BackgroundColor','[1 0.88 0.65]');
+add_block([L 'Continuous/Integrator'],[mdl '/Battery_SOC_pct'],'Position',[850 100 890 130], ...
+    'InitialCondition','SOC0','BackgroundColor','[1 0.88 0.65]');
+
+% Display
+add_block([L 'Sinks/Scope'],[mdl '/Scope'],'Position',[1000 40 1040 200],'NumInputPorts','5');
+add_block([L 'Signal Routing/Mux'],[mdl '/Mux'],'Position',[1000 240 1010 340],'Inputs','5');
+add_block([L 'Sinks/To Workspace'],[mdl '/ToWs'],'Position',[1060 275 1130 305], ...
+    'VariableName','hev_log','SaveFormat','Array');
+
+%% 3) Connect the blocks
+c = @(a,b) add_line(mdl,a,b,'autorouting','on');
+
+c('Speed_kmh/1','Acceleration/1');
+c('Speed_kmh/1','Gain_speed/1');
+c('Acceleration/1','Gain_accel/1');
+c('Gain_speed/1','Power_demand_kW/1');
+c('Gain_accel/1','Power_demand_kW/2');
+
+c('Power_demand_kW/1','Engine_kW/1');
+c('Power_demand_kW/1','Motor_kW/1');
+c('Engine_kW/1','Motor_kW/2');
+
+c('Motor_kW/1','To_SOC_rate/1');
+c('To_SOC_rate/1','Battery_SOC_pct/1');
+
+% waveforms -> Scope (5 plots) and Mux (for the MATLAB figure)
+src = {'Speed_kmh/1','Power_demand_kW/1','Engine_kW/1','Motor_kW/1','Battery_SOC_pct/1'};
+for k = 1:5
+    c(src{k},sprintf('Scope/%d',k));
+    c(src{k},sprintf('Mux/%d',k));
+end
+c('Mux/1','ToWs/1');
+
+save_system(mdl);
+
+%% 4) Run and plot
+open_system([mdl '/Scope']);          % Scope shows 5 waveforms
+out = sim(mdl);
+t = out.tout;  Y = out.hev_log;
+
+figure('Color','w','Position',[100 80 900 750],'Name','Simple HEV');
+names = {'Vehicle speed (km/h)','Power demand (kW)','Engine power (kW)', ...
+         'Motor power (kW)  [+ drive, - regen]','Battery SOC (%)'};
+for k = 1:5
+    subplot(5,1,k); plot(t,Y(:,k),'LineWidth',1.5); grid on; title(names{k});
+end
+xlabel('Time (s)');
+
+fprintf('\nDone. SOC: %.1f %% -> %.1f %%\n',Y(1,5),Y(end,5));

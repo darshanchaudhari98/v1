@@ -1,0 +1,19 @@
+clc; 
+clear; 
+close all; 
+SOC0 = 100; 
+I = 50; 
+Q = [60 150 200]; 
+t = 0:0.1:8; 
+figure; 
+for k = 1:length(Q)  
+    SOC = SOC0 - (I*t/Q(k))*100; 
+    SOC(SOC < 0) = 0; 
+    plot(t,SOC,'LineWidth',2); 
+    hold on; 
+end 
+grid on; 
+xlabel('Time (hour)'); 
+ylabel('SOC (%)'); 
+title('Effect of Battery Capacity on SOC'); 
+legend('60 Ah','150 Ah','200 Ah'); 
